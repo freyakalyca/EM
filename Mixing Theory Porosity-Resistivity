@@ -1,0 +1,131 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+ 
+# ── Parameters ─────────────────────────────────────────────────────────────────
+phi     = np.linspace(0.001, 0.25, 500)   # porosity / melt fraction (0–25 %)
+ 
+rho_fluid = 0.3    # saline fluid  [Ohm-m]
+rho_clay  = 5.0    # clay          [Ohm-m]
+rho_solid = 1e4    # host rock     [Ohm-m]  (high-resistivity background)
+ 
+MT_max   = 10.0    # upper bound of MT model range [Ohm-m]
+MT_min   = 1.0     # lower bound of MT model range [Ohm-m]  (visual floor)
+ 
+# ── 1. Modified Archie's Law ───────────────────────────────────────────────────
+# rho_bulk = rho_fluid * phi^(-m)   (Archie convention: higher phi → lower rho)
+def modified_archie(phi, rho_f, m):
+    return rho_f * phi**(-m)
+ 
+rho_arch_fluid_25  = modified_archie(phi, rho_fluid, 2.5)
+rho_arch_fluid_15  = modified_archie(phi, rho_fluid, 1.5)
+rho_arch_clay_25   = modified_archie(phi, rho_clay,  2.5)
+rho_arch_clay_15   = modified_archie(phi, rho_clay,  1.5)
+ 
+# ── 2. Waff Approximation ──────────────────────────────────────────────────────
+# Tubule geometry model (interconnected fluid tubes along grain edges)
+# rho_bulk = rho_fluid / (3 * phi / 2)   →  rho_bulk = 2*rho_fluid / (3*phi)
+# More general form: rho_bulk = rho_solid * (1 - phi) / (3*phi) * rho_fluid
+# Practical form used in geophysics (Waff 1974):
+#   sigma_bulk = sigma_fluid * (phi / (3*(1-phi) + phi))  ... series/parallel mix
+# Common simplified version:
+#   rho_bulk = rho_fluid / (3 * phi)        for phi << 1
+def waff(phi, rho_f):
+    sigma_f    = 1.0 / rho_f
+    sigma_s    = 1.0 / rho_solid
+    # Waff (1974) tubule model
+    sigma_bulk = (sigma_f * phi) / (3.0 * (1.0 - phi) + phi) + sigma_s * (1 - phi)
+    # Simplified dominant term (rock is essentially insulating):
+    sigma_bulk = sigma_f * phi / 3.0
+    return 1.0 / sigma_bulk
+ 
+rho_waff_fluid = waff(phi, rho_fluid)
+rho_waff_clay  = waff(phi, rho_clay)
+ 
+# ── 3. Hashin–Shtrikman Bounds ─────────────────────────────────────────────────
+# HS+  (conducting fluid = inclusion → upper bound on conductivity → lower rho)
+# HS-  (conducting fluid = matrix   → lower bound on conductivity → higher rho)
+#
+# For a two-phase medium (fluid fraction phi, solid fraction 1-phi):
+#   sigma_HS+ = sigma1 + (1-f) / (1/(sigma2-sigma1) + f/(3*sigma1))
+#   where sigma1 = max(sigma_fluid, sigma_solid),  f = volume fraction of sigma1
+#
+# Using standard HS formulas (Hashin & Shtrikman 1963):
+def hs_bounds(phi, rho_f, rho_s=rho_solid):
+    sf = 1.0 / rho_f
+    ss = 1.0 / rho_s
+ 
+    # HS+ : more-conducting phase (fluid) as reference
+    # sigma_HS+ = sf + (1-phi)/( 1/(ss-sf) + phi/(3*sf) )
+    hs_plus  = sf + (1.0 - phi) / (1.0/(ss - sf) + phi/(3.0*sf))
+ 
+    # HS- : less-conducting phase (solid) as reference
+    # sigma_HS- = ss + phi/( 1/(sf-ss) + (1-phi)/(3*ss) )
+    hs_minus = ss + phi / (1.0/(sf - ss) + (1.0 - phi)/(3.0*ss))
+ 
+    return 1.0/hs_plus, 1.0/hs_minus
+ 
+rho_hsp_fluid, rho_hsm_fluid = hs_bounds(phi, rho_fluid)
+rho_hsp_clay,  rho_hsm_clay  = hs_bounds(phi, rho_clay)
+ 
+# ── Plotting ───────────────────────────────────────────────────────────────────
+fig, axes = plt.subplots(1, 3, figsize=(15, 5.5))
+fig.suptitle("Mixing Theory: Porosity vs Resistivity", fontsize=13, fontweight='bold', y=1.01)
+ 
+colors = {
+    'fluid_25' : '#d62728',   # red  solid
+    'fluid_15' : '#d62728',   # red  dashed
+    'clay_25'  : '#ff7f0e',   # orange solid
+    'clay_15'  : '#ff7f0e',   # orange dashed
+}
+ 
+ylim = (1e0, 1e4)
+xlim = (0.00, 0.25)
+ 
+def shade_MT(ax):
+    ax.axhspan(MT_min, MT_max, color='lightgray', alpha=0.6, label='MT Model Range', zorder=0)
+ 
+# ─── Panel 1: Modified Archie's Law ───────────────────────────────────────────
+ax = axes[0]
+shade_MT(ax)
+ax.semilogy(phi, rho_arch_clay_25,  color='#ff7f0e', ls='-',  lw=1.8, label='Clay (m=2.5)')
+ax.semilogy(phi, rho_arch_clay_15,  color='#ff7f0e', ls='--', lw=1.8, label='Clay (m=1.5)')
+ax.semilogy(phi, rho_arch_fluid_25, color='#d62728', ls='-',  lw=1.8, label='Saline Fluid (m=2.5)')
+ax.semilogy(phi, rho_arch_fluid_15, color='#d62728', ls='--', lw=1.8, label='Saline Fluid (m=1.5)')
+ax.set_title("Modified Archie's Law", fontsize=11)
+ax.set_xlabel("Fraction")
+ax.set_ylabel("Resistivity (Ω·m)")
+ax.set_xlim(xlim);  ax.set_ylim(ylim)
+ax.legend(fontsize=8, framealpha=0.7)
+ax.grid(True, which='both', ls=':', alpha=0.4)
+ 
+# ─── Panel 2: Waff Approximation ──────────────────────────────────────────────
+ax = axes[1]
+shade_MT(ax)
+ax.semilogy(phi, rho_waff_clay,  color='#ff7f0e', ls='-', lw=1.8, label='Clay')
+ax.semilogy(phi, rho_waff_fluid, color='#d62728', ls='-', lw=1.8, label='Saline Fluid')
+ax.set_title("Waff Approximation", fontsize=11)
+ax.set_xlabel("Fraction")
+ax.set_ylabel("Resistivity (Ω·m)")
+ax.set_xlim(xlim);  ax.set_ylim(ylim)
+ax.legend(fontsize=8, framealpha=0.7)
+ax.grid(True, which='both', ls=':', alpha=0.4)
+ 
+# ─── Panel 3: Hashin–Shtrikman Bounds ─────────────────────────────────────────
+ax = axes[2]
+shade_MT(ax)
+ax.semilogy(phi, rho_hsp_clay,  color='#ff7f0e', ls='-',  lw=1.8, label='HS+ Clay')
+ax.semilogy(phi, rho_hsm_clay,  color='#ff7f0e', ls='--', lw=1.8, label='HS- Clay')
+ax.semilogy(phi, rho_hsp_fluid, color='#d62728', ls='-',  lw=1.8, label='HS+ Saline Fluid')
+ax.semilogy(phi, rho_hsm_fluid, color='#d62728', ls='--', lw=1.8, label='HS- Saline Fluid')
+ax.set_title("Hashin–Shtrikman Bounds", fontsize=11)
+ax.set_xlabel("Fraction")
+ax.set_ylabel("Resistivity (Ω·m)")
+ax.set_xlim(xlim);  ax.set_ylim(ylim)
+ax.legend(fontsize=8, framealpha=0.7)
+ax.grid(True, which='both', ls=':', alpha=0.4)
+ 
+plt.tight_layout()
+plt.savefig("/mnt/user-data/outputs/mixing_theory.png", dpi=150, bbox_inches='tight')
+plt.show()
+print("Saved: mixing_theory.png")
